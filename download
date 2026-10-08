@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+.venv/
+models/
+audio_cache/
+voices/*.wav
+voices/*.txt
+__pycache__/
+pip-cache/

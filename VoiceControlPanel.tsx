@@ -1,0 +1,13 @@
+import React, {useState} from 'react';
+import {Knob} from './Knob';
+import {SpeakerConfig,PodcastLanguage,ClonedVoiceProfile} from '../types/podcast';
+import {decodeAudioBase64,getAudioContext,processSegmentDsp} from '../utils/audioEngine';
+interface Props {speakers:Record<'male'|'female',SpeakerConfig>;onUpdateSpeaker:(g:'male'|'female',s:Partial<SpeakerConfig>)=>void;language:PodcastLanguage;onApplySpeakerAudioToSegments?:unknown;onApplyClonedVoiceToSpeaker?:(g:'male'|'female',p:ClonedVoiceProfile)=>void;}
+export function VoiceControlPanel({speakers,onUpdateSpeaker,language}:Props){
+ const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ async function test(g:'male'|'female'){
+  setBusy(true);setMessage('Generating voice preview…');
+  try{const r=await fetch('/api/tts/generate-segment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({speaker:g,language,text:language.startsWith('pt')?'Olá! Vamos descobrir esta história juntos, numa conversa cheia de curiosidade.':'Hello! Let’s discover this story together.'})});const data=await r.json();if(!r.ok)throw Error(data.error);const raw=await decodeAudioBase64(data.audioBase64);const audio=await processSegmentDsp(raw,speakers[g]);const ctx=getAudioContext();const source=ctx.createBufferSource();source.buffer=audio;source.connect(ctx.destination);source.start();setMessage('Playing voice preview.');}catch(e){setMessage(e instanceof Error?e.message:'Voice preview failed.');}finally{setBusy(false);}
+ }
+ return <div><div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{(['male','female'] as const).map(g=><div key={g} className="bg-zinc-900/90 border border-zinc-800 rounded-xl p-5 shadow-xl"><div className="flex items-center justify-between mb-5"><div><h3 className={g==='male'?'text-amber-400 font-bold':'text-rose-400 font-bold'}>{g==='male'?'Simão · Male Voice':'Marta · Female Voice'}</h3><p className="text-xs text-zinc-400">ElevenLabs · Portugal Portuguese</p></div><button disabled={busy} onClick={()=>test(g)} className="px-3 py-2 bg-zinc-800 rounded text-xs text-zinc-100 disabled:opacity-50">Test Voice</button></div><div className="flex justify-around flex-wrap gap-3">{(['pitch','speed','tone','volume','pan'] as const).map(k=><Knob key={k} label={k.toUpperCase()} value={speakers[g][k]} min={k==='tone'||k==='pan'?-1:k==='volume'?0:0.85} max={k==='tone'||k==='pan'?1:k==='volume'?1.2:1.15} step={0.01} onChange={v=>onUpdateSpeaker(g,{[k]:v})}/>)}</div><button className="text-xs text-zinc-400 mt-4" onClick={()=>onUpdateSpeaker(g,{pitch:1,speed:1,tone:0,volume:1,pan:g==='male'?-0.25:0.25})}>Reset voice controls</button></div>)}</div><p role="status" className="text-xs text-zinc-400 mt-2">{message}</p></div>;
+}
