@@ -1,868 +1,814 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from "react";
+import { VintageRadioAudioEngine } from "./utils/audioEngine";
+import { PRESET_BROADCASTS } from "./data/presets";
 import {
-  PodcastSegment,
-  SpeakerConfig,
-  PodcastLanguage,
-  BatchProgressState,
-  ClonedVoiceProfile,
-} from './types/podcast';
-import { SAMPLE_SCRIPTS } from './data/sampleScripts';
-import { VoiceControlPanel } from './components/VoiceControlPanel';
-import { ScriptEditor } from './components/ScriptEditor';
-import { MasterPlayer } from './components/MasterPlayer';
-import { BatchProcessorModal } from './components/BatchProcessorModal';
-import { SpeechToTextModal } from './components/SpeechToTextModal';
-import {
-  mixMasterPodcast,
-  decodeAudioBase64,
-  getAudioContext,
-} from './utils/audioEngine';
-import {
-  Radio,
-  Sparkles,
-  Sliders,
-  Layers,
-  Mic,
+  Play,
+  Pause,
+  RotateCcw,
+  Download,
   Volume2,
+  Radio,
+  Mic,
+  Sparkles,
+  AlertCircle,
+  Copy,
+  Check,
+  Award,
+  Sliders,
   FileAudio,
-  CheckCircle2,
-  Headphones,
-  Info,
-} from 'lucide-react';
+  BookOpen,
+} from "lucide-react";
+
+const INITIAL_TEXT =
+  "Em visita particular às instalações das Minas de Lenhite do Espadanal, chegou a esta vila, cerca das 15 horas do dia 25, o Senhor Ministro da Economia, que, como já dissemos no último número do nosso jornal, em informação aliás incompleta, era aguardado junto do cais do caminho de ferro mineiro pelos senhores Doutor Astério Rosa, Administrador Delegado da Empresa Industrial Carbonífera Electrotécnica, Limitada, proprietária das referidas minas; Engenheiro Cílio Rosa, Administrador da mesma empresa; Engenheiro Falcão Mena, Director Técnico das Minas; Major Cabral de Quadros e Doutor Branco, respectivamente, Presidente e Secretário da Câmara Municipal; Doutor Vidigal Pais, médico da empresa, e Doutor Calado da Maia, que representava a União Nacional, na ausência do Presidente do mesmo organismo; Engenheiros Castro e Sola, Director Geral de Minas; Ferreira do Amaral, Director Geral dos Serviços Industriais; Alexandre Vasconcelos Matias.";
+
+interface VoiceConfig {
+  id: "Fenrir" | "Charon" | "Puck" | "Zephyr";
+  title: string;
+  role: string;
+  registerBadge: string;
+  description: string;
+  accentHint: string;
+  defaultPitch: number;
+  defaultBass: number;
+  defaultClarity: number;
+  defaultSpeed: number;
+}
+
+const VOICES: VoiceConfig[] = [
+  {
+    id: "Fenrir",
+    title: "Fenrir — O Baixo Solene de Estado",
+    role: "Locutor Oficial da Emissora Nacional",
+    registerBadge: "Baixo Cavernoso (Mais Grave)",
+    description: "Baixo-barítono muito profundo, cavernoso, solene e ministerial com ressonância peitoral máxima de 1950.",
+    accentHint: "Dicção austera e pausada de Lisboa (Quelhas), pausas deliberadas e solenidade institucional.",
+    defaultPitch: 0.93,
+    defaultBass: 8,
+    defaultClarity: 6,
+    defaultSpeed: 0.94,
+  },
+  {
+    id: "Charon",
+    title: "Charon — O Barítono Nobre de Noticiário",
+    role: "Comentador Noticioso & Editorialista de Época",
+    registerBadge: "Barítono Nobre & Distinto",
+    description: "Voz média-grave culta, aristocrática e elegante de estúdio, típica do Jornal Falado e crónicas internacionais.",
+    accentHint: "Dicção formal e equilibrada de Portugal continental, ritmo estável e sem afetação.",
+    defaultPitch: 0.98,
+    defaultBass: 5,
+    defaultClarity: 7,
+    defaultSpeed: 1.0,
+  },
+  {
+    id: "Puck",
+    title: "Puck — O Repórter Dinâmico de Campo",
+    role: "Correspondente de Exterior em Emissão Direta",
+    registerBadge: "Barítono Enérgico (Exterior)",
+    description: "Voz masculina viva, enérgica, incisiva e projetada, ideal para reportagens nas minas, portos e acontecimentos ao ar livre.",
+    accentHint: "Cadência rápida, entoação dinâmica e assertiva de reportagem jornalística em direto de 1950.",
+    defaultPitch: 1.01,
+    defaultBass: 2,
+    defaultClarity: 9,
+    defaultSpeed: 1.06,
+  },
+  {
+    id: "Zephyr",
+    title: "Zephyr — O Cronista Noturno de Salão",
+    role: "Apresentador Noturno & Boletins Marítimos",
+    registerBadge: "Voz Aveludada & Suave",
+    description: "Voz aveludada, suave, profunda e intimista, com caloroso efeito de proximidade de microfone de fita.",
+    accentHint: "Cadência serena e melódica de salão radiofónico, suavidade nos fonemas sibilantes de Portugal.",
+    defaultPitch: 0.96,
+    defaultBass: 6,
+    defaultClarity: 5,
+    defaultSpeed: 0.96,
+  },
+];
 
 export default function App() {
-  const [language, setLanguage] = useState<PodcastLanguage>('pt-PT');
+  const [text, setText] = useState<string>(INITIAL_TEXT);
+  const [voice, setVoice] = useState<"Fenrir" | "Charon" | "Puck" | "Zephyr">("Fenrir");
+  const [pitchDepth, setPitchDepth] = useState<"very_deep" | "deep">("very_deep");
+  const [bassBoostAmount, setBassBoostAmount] = useState<number>(8); // dB (Warm, clean chest resonance)
+  const [clarityBoostAmount, setClarityBoostAmount] = useState<number>(6); // dB (High vocal clarity & crisp diction)
+  const [pitchShiftMultiplier, setPitchShiftMultiplier] = useState<number>(0.93); // Crisp articulation
+  const [radioEffect, setRadioEffect] = useState<boolean>(true);
+  const [speed, setSpeed] = useState<number>(0.94); // Natural 1950s broadcasting tempo
+  const [volume, setVolume] = useState<number>(0.95);
 
-  // Dual Voice Configuration with individual physical knobs
-  const [speakers, setSpeakers] = useState<{
-    male: SpeakerConfig;
-    female: SpeakerConfig;
-  }>({
-    male: {
-      id: 'speaker-male',
-      name: 'Simão',
-      gender: 'male',
-      voiceName: 'SgbHvexvdPuvqzNjvbPM',
-      pitch: 1.0,
-      speed: 1.0,
-      tone: 0,
-      volume: 1.0,
-      pan: -0.25,
-      stylePrompt:
-        'Authentic native European Portuguese (pt-PT) male podcast documentary host. Deep resonant baritone voice, authentic Portugal Lisbon accent, warm chest resonance, engaging conversational storytelling delivery, natural speaking cadence, clear broadcast articulation.',
-    },
-    female: {
-      id: 'speaker-female',
-      name: 'Marta',
-      gender: 'female',
-      voiceName: 'bBNhdwrIjl4fcVYiRbT2',
-      pitch: 1.0,
-      speed: 1.0,
-      tone: 0,
-      volume: 1.0,
-      pan: 0.25,
-      stylePrompt:
-        'Authentic native European Portuguese (pt-PT) female podcast host. Expressive, articulate, bright Lisbon accent, engaging conversational pacing, warm natural storytelling inflection, clear and lively broadcast delivery.',
-    },
-  });
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [hasAudio, setHasAudio] = useState<boolean>(false);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [downloadSuccessMsg, setDownloadSuccessMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Dialogue segments initialized with sample script
-  const [segments, setSegments] = useState<PodcastSegment[]>(() => {
-    const initialSample = SAMPLE_SCRIPTS[0];
-    return initialSample.segments.map((s, idx) => ({
-      ...s,
-      id: `seg-init-${idx}`,
-      status: 'idle',
-    }));
-  });
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
 
-  // Master Timeline state
-  const [masterAudioBuffer, setMasterAudioBuffer] = useState<AudioBuffer | null>(null);
-  const [wavUrl, setWavUrl] = useState<string | null>(null);
-  const [mp3Url, setMp3Url] = useState<string | null>(null);
-  const [totalDuration, setTotalDuration] = useState(0);
-  const [includeIntroChime, setIncludeIntroChime] = useState(false);
-  const [pauseDuration, setPauseDuration] = useState(0.35);
-  const [isRemixing, setIsRemixing] = useState(false);
+  const audioEngineRef = useRef<VintageRadioAudioEngine | null>(null);
+  const animRef = useRef<number | null>(null);
 
-  // Batch Processing state
-  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
-  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
-  const [isBatchPaused, setIsBatchPaused] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<BatchProgressState>({
-    isActive: false,
-    total: 0,
-    completed: 0,
-    currentSegmentIndex: 0,
-    phase: 'idle',
-  });
+  useEffect(() => {
+    audioEngineRef.current = new VintageRadioAudioEngine();
+    return () => {
+      if (audioEngineRef.current) audioEngineRef.current.stop();
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    };
+  }, []);
 
-  // Speech-to-Text modal state
-  const [isTranscriberOpen, setIsTranscriberOpen] = useState(false);
+  // Sync settings with audio engine
+  useEffect(() => {
+    if (audioEngineRef.current) {
+      audioEngineRef.current.updateSettings({
+        filterMode: radioEffect ? "1950s_am" : "clean_studio",
+        crackleLevel: radioEffect ? 0.2 : 0,
+        humLevel: radioEffect ? 0.1 : 0,
+        cabinetWarmth: radioEffect ? 0.7 : 0,
+        playIntroChime: radioEffect,
+        playbackSpeed: speed,
+        volume: volume,
+        voicePitchShift: pitchShiftMultiplier,
+        bassBoost: bassBoostAmount,
+        clarityBoost: clarityBoostAmount,
+      });
+    }
+  }, [radioEffect, speed, volume, pitchShiftMultiplier, bassBoostAmount, clarityBoostAmount]);
 
-  // Cancel ref for batch processing
-  // Cancel ref for batch processing
-  const cancelBatchRef = useRef(false);
+  // Track playback time
+  useEffect(() => {
+    const loop = () => {
+      if (audioEngineRef.current) {
+        const prog = audioEngineRef.current.getPlaybackProgress();
+        setCurrentTime(prog.currentTime);
+        setDuration(prog.duration);
+        if (prog.isPlaying !== isPlaying) {
+          setIsPlaying(prog.isPlaying);
+        }
+      }
+      animRef.current = requestAnimationFrame(loop);
+    };
+    animRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    };
+  }, [isPlaying]);
 
-  // Keep refs to avoid stale closure issues in async callbacks
-  const speakersRef = useRef(speakers);
-  speakersRef.current = speakers;
-
-  const segmentsRef = useRef(segments);
-  segmentsRef.current = segments;
-
-  // Handle speaker updates
-  const handleUpdateSpeaker = (
-    gender: 'male' | 'female',
-    updates: Partial<SpeakerConfig>
-  ) => {
-    setSpeakers((prev) => {
-      const next = {
-        ...prev,
-        [gender]: { ...prev[gender], ...updates },
-      };
-      speakersRef.current = next;
-      return next;
-    });
+  const handleSelectVoice = (selectedId: "Fenrir" | "Charon" | "Puck" | "Zephyr") => {
+    setVoice(selectedId);
+    const cfg = VOICES.find((v) => v.id === selectedId);
+    if (cfg) {
+      // Adapt tuning defaults to highlight the unique variety of each male voice
+      setPitchShiftMultiplier(cfg.defaultPitch);
+      setBassBoostAmount(cfg.defaultBass);
+      setClarityBoostAmount(cfg.defaultClarity);
+      setSpeed(cfg.defaultSpeed);
+      if (selectedId === "Fenrir") {
+        setPitchDepth("very_deep");
+      } else {
+        setPitchDepth("deep");
+      }
+    }
   };
 
-  // Re-mix master timeline from currently ready segments
-  const remixMaster = useCallback(
-    async (
-      currentSegments = segmentsRef.current,
-      overrideSpeakers?: { male: SpeakerConfig; female: SpeakerConfig }
-    ) => {
-      const readySegments = currentSegments.filter(
-        (s) => Boolean(s.audioBuffer)
-      );
-      if (readySegments.length === 0) return;
+  const handleLoadPreset = (presetText: string, suggestedVoice: "Fenrir" | "Charon" | "Puck" | "Zephyr") => {
+    setText(presetText);
+    handleSelectVoice(suggestedVoice);
+  };
 
-      const activeSpeakers = overrideSpeakers || speakersRef.current;
-      setIsRemixing(true);
-      try {
-        const result = await mixMasterPodcast(currentSegments, activeSpeakers, {
-          includeIntroChime,
-          pauseDuration,
-        });
-
-        setMasterAudioBuffer(result.audioBuffer);
-        setWavUrl(result.wavUrl);
-        setMp3Url(result.mp3Url);
-        setTotalDuration(result.totalDuration);
-      } catch (err) {
-        console.error('Failed to remix master:', err);
-      } finally {
-        setIsRemixing(false);
-      }
-    },
-    [includeIntroChime, pauseDuration]
-  );
-
-  // Batch Processing Engine: processes multiple segments with fast caching, retry & acoustic fallback
-  const startBatchProcessing = async (
-    customSegments?: PodcastSegment[],
-    overrideSpeakers?: { male: SpeakerConfig; female: SpeakerConfig },
-    openModal = false
-  ) => {
-    const segmentsToUse = customSegments || segmentsRef.current;
-    if (segmentsToUse.length === 0) return;
-
-    const activeSpeakers = overrideSpeakers || speakersRef.current;
-
-    cancelBatchRef.current = false;
-    setIsBatchProcessing(true);
-    if (openModal) {
-      setIsBatchModalOpen(true);
-    }
-    setIsBatchPaused(false);
-
-    setBatchProgress({
-      isActive: true,
-      total: segmentsToUse.length,
-      completed: segmentsToUse.filter((s) => s.status === 'ready' && s.audioBuffer).length,
-      currentSegmentIndex: 0,
-      phase: 'generating_segments',
-    });
-
-    const updatedSegments = [...segmentsToUse];
-
-    // Loop through segments and synthesize any that are not ready
-    for (let i = 0; i < updatedSegments.length; i++) {
-      if (cancelBatchRef.current) break;
-
-      const seg = updatedSegments[i];
-      const speakerConfig = activeSpeakers[seg.speaker];
-
-      // Skip if already rendered with audio and voice matches
-      if (
-        seg.audioBuffer &&
-        seg.status === 'ready' &&
-        !customSegments &&
-        (!speakerConfig.clonedVoice || seg.clonedVoiceName === speakerConfig.clonedVoice.name)
-      ) {
-        continue;
-      }
-
-      setBatchProgress((prev) => ({
-        ...prev,
-        currentSegmentIndex: i,
-        phase: 'generating_segments',
-      }));
-
-      // Mark segment as rendering
-      updatedSegments[i] = { ...seg, status: 'rendering' };
-      setSegments([...updatedSegments]);
-
-      let renderedSuccessfully = false;
-
-      // Attempt 1: Call server TTS endpoint with cloned voice profile
-      try {
-        const res = await fetch('/api/tts/generate-segment', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: seg.text,
-            speaker: seg.speaker,
-            voiceName: speakerConfig.voiceName,
-            language,
-            pitch: speakerConfig.pitch,
-            speed: speakerConfig.speed,
-            tone:
-              speakerConfig.tone < -0.2
-                ? 'warm'
-                : speakerConfig.tone > 0.2
-                ? 'bright'
-                : 'neutral',
-            styleDescription:
-              speakerConfig.clonedVoice?.stylePrompt ||
-              speakerConfig.stylePrompt ||
-              seg.styleDescription,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.audioBase64) {
-            const rawBuffer = await decodeAudioBase64(data.audioBase64);
-            updatedSegments[i] = {
-              ...seg,
-              status: 'ready',
-              isCustomAudio: false,
-              audioBase64: data.audioBase64,
-              audioBuffer: rawBuffer,
-              duration: rawBuffer.duration,
-              clonedVoiceName: speakerConfig.clonedVoice?.name || seg.clonedVoiceName,
-            };
-            renderedSuccessfully = true;
-          }
-        }
-      } catch (err) {
-        console.warn(`Server segment call failed for ${i}, attempting fallback:`, err);
-      }
-
-      // If server segment call failed on first attempt, retry once
-      if (!renderedSuccessfully) {
-        try {
-          await new Promise((r) => setTimeout(r, 600));
-          const retryRes = await fetch('/api/tts/generate-segment', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: seg.text,
-              speaker: seg.speaker,
-              voiceName: speakerConfig.voiceName,
-              language,
-              pitch: speakerConfig.pitch,
-              speed: speakerConfig.speed,
-              styleDescription:
-                speakerConfig.clonedVoice?.stylePrompt ||
-                speakerConfig.stylePrompt ||
-                seg.styleDescription,
-            }),
-          });
-          if (retryRes.ok) {
-            const data = await retryRes.json();
-            if (data.audioBase64) {
-              const rawBuffer = await decodeAudioBase64(data.audioBase64);
-              updatedSegments[i] = {
-                ...seg,
-                status: 'ready',
-                isCustomAudio: false,
-                audioBase64: data.audioBase64,
-                audioBuffer: rawBuffer,
-                duration: rawBuffer.duration,
-                clonedVoiceName: speakerConfig.clonedVoice?.name || seg.clonedVoiceName,
-              };
-              renderedSuccessfully = true;
-            }
-          }
-        } catch (retryErr) {
-          console.warn(`Retry failed for segment ${i}:`, retryErr);
-        }
-      }
-
-      if (!renderedSuccessfully) {
-        updatedSegments[i] = {
-          ...seg,
-          status: 'error',
-          errorMessage: 'Unable to synthesize audio segment',
-        };
-      }
-
-      setSegments([...updatedSegments]);
-      setBatchProgress((prev) => ({
-        ...prev,
-        completed: updatedSegments.filter((s) => s.status === 'ready').length,
-      }));
-    }
-
-    if (cancelBatchRef.current || updatedSegments.some(s => s.status !== 'ready' || !s.audioBuffer)) {
-      setBatchProgress(prev => ({...prev, phase: 'error', errorMessage: 'Podcast incomplete. Resolve failed turns and render again.'}));
-      setIsBatchProcessing(false);
-      return;
-    }
-    // Phase 2: Mixing Master & Encoding
-    setBatchProgress((prev) => ({
-      ...prev,
-      phase: 'mixing_master',
-    }));
+  const handleGenerate = async () => {
+    if (!text.trim()) return;
 
     try {
-      const result = await mixMasterPodcast(updatedSegments, activeSpeakers, {
-        includeIntroChime,
-        pauseDuration,
+      setIsGenerating(true);
+      setError(null);
+      setDownloadSuccessMsg(null);
+
+      if (audioEngineRef.current) {
+        audioEngineRef.current.stop();
+      }
+      setIsPlaying(false);
+
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          voice,
+          pitchDepth,
+        }),
       });
 
-      setMasterAudioBuffer(result.audioBuffer);
-      setWavUrl(result.wavUrl);
-      setMp3Url(result.mp3Url);
-      setTotalDuration(result.totalDuration);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Erro ao gerar voz (${res.status})`);
+      }
 
-      setBatchProgress((prev) => ({
-        ...prev,
-        phase: 'done',
-      }));
+      const data = await res.json();
+      if (!data.audioBase64) {
+        throw new Error("Não foram recebidos dados de áudio.");
+      }
+
+      if (audioEngineRef.current) {
+        await audioEngineRef.current.decodeAudio(data.audioBase64, data.mimeType || "audio/pcm;rate=24000");
+        setHasAudio(true);
+
+        // Auto play with vintage DSP
+        audioEngineRef.current.play(
+          {
+            filterMode: radioEffect ? "1950s_am" : "clean_studio",
+            crackleLevel: radioEffect ? 0.2 : 0,
+            humLevel: radioEffect ? 0.1 : 0,
+            cabinetWarmth: radioEffect ? 0.7 : 0,
+            playIntroChime: radioEffect,
+            playbackSpeed: speed,
+            volume: volume,
+            voicePitchShift: pitchShiftMultiplier,
+            bassBoost: bassBoostAmount,
+            clarityBoost: clarityBoostAmount,
+          },
+          0,
+          () => setIsPlaying(false)
+        );
+        setIsPlaying(true);
+      }
     } catch (err: any) {
-      console.error('Batch mix failed:', err);
-      setBatchProgress((prev) => ({
-        ...prev,
-        phase: 'error',
-        errorMessage: err?.message,
-      }));
+      console.error(err);
+      setError(err.message || "Falha ao gerar a síntese vocal.");
     } finally {
-      setIsBatchProcessing(false);
+      setIsGenerating(false);
     }
   };
 
-  // Apply cloned voice profile to speaker so all text boxes are read using this voice
-  const handleApplyClonedVoiceToSpeaker = useCallback(
-    async (
-      gender: 'male' | 'female',
-      clonedProfile: ClonedVoiceProfile,
-      autoSynthesize = true
-    ) => {
-      const nextSpeakers = {
-        ...speakersRef.current,
-        [gender]: {
-          ...speakersRef.current[gender],
-          voiceName: clonedProfile.voiceName,
-          pitch: clonedProfile.pitch,
-          speed: clonedProfile.speed,
-          tone: clonedProfile.tone,
-          stylePrompt: clonedProfile.stylePrompt,
-          clonedVoice: clonedProfile,
+  const handlePlay = () => {
+    if (!audioEngineRef.current || !hasAudio) return;
+    const effectiveSpeed = speed * pitchShiftMultiplier;
+    const maxDur = duration > 0 ? duration : (audioEngineRef.current.getCurrentBuffer()?.duration || 1) / effectiveSpeed;
+    const offset = currentTime >= maxDur ? 0 : currentTime;
+
+    audioEngineRef.current.play(
+      {
+        filterMode: radioEffect ? "1950s_am" : "clean_studio",
+        crackleLevel: radioEffect ? 0.2 : 0,
+        humLevel: radioEffect ? 0.1 : 0,
+        cabinetWarmth: radioEffect ? 0.7 : 0,
+        playIntroChime: false,
+        playbackSpeed: speed,
+        volume: volume,
+        voicePitchShift: pitchShiftMultiplier,
+        bassBoost: bassBoostAmount,
+        clarityBoost: clarityBoostAmount,
+      },
+      offset,
+      () => setIsPlaying(false)
+    );
+    setIsPlaying(true);
+  };
+
+  const handlePause = () => {
+    if (!audioEngineRef.current) return;
+    audioEngineRef.current.pause();
+    setIsPlaying(false);
+  };
+
+  const handleRestart = () => {
+    if (!audioEngineRef.current || !hasAudio) return;
+    audioEngineRef.current.play(
+      {
+        filterMode: radioEffect ? "1950s_am" : "clean_studio",
+        crackleLevel: radioEffect ? 0.2 : 0,
+        humLevel: radioEffect ? 0.1 : 0,
+        cabinetWarmth: radioEffect ? 0.7 : 0,
+        playIntroChime: radioEffect,
+        playbackSpeed: speed,
+        volume: volume,
+        voicePitchShift: pitchShiftMultiplier,
+        bassBoost: bassBoostAmount,
+        clarityBoost: clarityBoostAmount,
+      },
+      0,
+      () => setIsPlaying(false)
+    );
+    setIsPlaying(true);
+  };
+
+  // Download handler supporting both full 1950s radio effect and clean studio vocal
+  const handleDownload = async (applyVintageEffects: boolean = true) => {
+    if (!audioEngineRef.current || !hasAudio) return;
+    try {
+      setIsExporting(true);
+      setError(null);
+      setDownloadSuccessMsg(null);
+
+      const blob = await audioEngineRef.current.exportAsWav(
+        {
+          filterMode: applyVintageEffects ? "1950s_am" : "clean_studio",
+          crackleLevel: applyVintageEffects ? 0.2 : 0,
+          humLevel: applyVintageEffects ? 0.1 : 0,
+          cabinetWarmth: applyVintageEffects ? 0.7 : 0,
+          playIntroChime: false,
+          playbackSpeed: speed,
+          volume: 1.0,
+          voicePitchShift: pitchShiftMultiplier,
+          bassBoost: bassBoostAmount,
+          clarityBoost: clarityBoostAmount,
         },
-      };
+        applyVintageEffects
+      );
 
-      setSpeakers(nextSpeakers);
-      speakersRef.current = nextSpeakers;
+      const fileName = `emissora_nacional_1950s_pt-PT_${voice.toLowerCase()}_${applyVintageEffects ? "radio_am" : "estudio_limpo"}.wav`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
 
-      // Invalidate segments for this speaker so they synthesize reading their text boxes with this voice!
-      const updated = segmentsRef.current.map((s) => {
-        if (s.speaker === gender) {
-          return {
-            ...s,
-            status: 'idle' as const,
-            isCustomAudio: false,
-            audioBuffer: undefined,
-            audioBase64: undefined,
-            styleDescription: clonedProfile.stylePrompt,
-            clonedVoiceName: clonedProfile.name,
-          };
-        }
-        return s;
-      });
-      setSegments(updated);
-      segmentsRef.current = updated;
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 2000);
 
-      if (autoSynthesize) {
-        setTimeout(() => {
-          startBatchProcessing(updated, nextSpeakers, false);
-        }, 50);
-      }
-    },
-    []
-  );
-
-  // Clone voice from uploaded audio file and apply it to read all dialogue text boxes
-  const handleCloneAndApplyVoice = useCallback(
-    async (
-      file: File,
-      target: 'male' | 'female' | 'both' = 'male'
-    ) => {
-      try {
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const resultStr = typeof reader.result === 'string' ? reader.result : '';
-            const commaIdx = resultStr.indexOf(',');
-            resolve(commaIdx >= 0 ? resultStr.slice(commaIdx + 1) : resultStr);
-          };
-          reader.onerror = () => resolve('');
-          reader.readAsDataURL(file);
-        });
-
-        const res = await fetch('/api/voice/clone-profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            audioBase64: base64,
-            mimeType: file.type || 'audio/wav',
-            fileName: file.name,
-            language,
-            target,
-          }),
-        });
-
-        const data = res.ok ? await res.json() : null;
-
-        const detectedGender: 'male' | 'female' =
-          data?.gender === 'female' || file.name.toLowerCase().includes('female')
-            ? 'female'
-            : 'male';
-        const actualTarget: 'male' | 'female' | 'both' =
-          target === 'both' ? 'both' : (target || detectedGender);
-
-        const isMaleTarget = actualTarget === 'male' || (actualTarget === 'both' && detectedGender === 'male');
-        const defaultVoiceName = isMaleTarget ? 'Charon' : 'Aoede';
-        const defaultStylePrompt = isMaleTarget
-          ? 'Authentic native European Portuguese (pt-PT) male podcast documentary host. Deep resonant baritone voice, authentic Portugal Lisbon accent, warm chest resonance, engaging conversational storytelling delivery, natural speaking cadence, clear broadcast articulation.'
-          : 'Authentic native European Portuguese (pt-PT) female podcast host. Expressive, articulate, bright Lisbon accent, engaging conversational pacing, warm natural storytelling inflection, clear and lively broadcast delivery.';
-
-        const clonedProfile: ClonedVoiceProfile = {
-          name: file.name,
-          voiceName: data?.voiceName || defaultVoiceName,
-          pitch: data?.pitch ?? (isMaleTarget ? 0.94 : 1.0),
-          speed: data?.speed ?? 1.0,
-          tone: data?.tone ?? (isMaleTarget ? -0.2 : 0.1),
-          stylePrompt: data?.stylePrompt || defaultStylePrompt,
-          summary: data?.summary || `Cloned voice profile for ${file.name}`,
-          detectedAccent: data?.detectedAccent || 'European Portuguese (Lisbon)',
-          sourceAudioBase64: base64,
-        };
-
-        const current = speakersRef.current;
-        let nextSpeakers = { ...current };
-
-        if (actualTarget === 'both') {
-          nextSpeakers = {
-            male: {
-              ...current.male,
-              voiceName: 'Charon',
-              pitch: clonedProfile.pitch ?? 0.94,
-              speed: clonedProfile.speed ?? 1.0,
-              tone: clonedProfile.tone ?? -0.2,
-              stylePrompt: clonedProfile.stylePrompt,
-              clonedVoice: { ...clonedProfile, voiceName: 'Charon' },
-            },
-            female: {
-              ...current.female,
-              voiceName: 'Aoede',
-              pitch: 1.0,
-              speed: clonedProfile.speed ?? 1.0,
-              tone: 0.1,
-              stylePrompt: clonedProfile.stylePrompt,
-              clonedVoice: { ...clonedProfile, voiceName: 'Aoede' },
-            },
-          };
-        } else {
-          nextSpeakers = {
-            ...current,
-            [actualTarget]: {
-              ...current[actualTarget],
-              voiceName: clonedProfile.voiceName,
-              pitch: clonedProfile.pitch,
-              speed: clonedProfile.speed,
-              tone: clonedProfile.tone,
-              stylePrompt: clonedProfile.stylePrompt,
-              clonedVoice: clonedProfile,
-            },
-          };
-        }
-
-        setSpeakers(nextSpeakers);
-        speakersRef.current = nextSpeakers;
-
-        // Update all target segments to use this cloned voice to read their text boxes!
-        const updated = segmentsRef.current.map((s) => {
-          if (actualTarget === 'both' || s.speaker === actualTarget) {
-            return {
-              ...s,
-              status: 'idle' as const,
-              isCustomAudio: false,
-              audioBuffer: undefined,
-              audioBase64: undefined,
-              styleDescription: clonedProfile.stylePrompt,
-              clonedVoiceName: file.name,
-            };
-          }
-          return s;
-        });
-
-        setSegments(updated);
-        segmentsRef.current = updated;
-
-        // Immediately start batch synthesis so text boxes are read in this cloned voice!
-        setTimeout(() => {
-          startBatchProcessing(updated, nextSpeakers, false);
-        }, 50);
-      } catch (err) {
-        console.warn('Voice clone fallback applied:', err);
-      }
-    },
-    [language]
-  );
-
-  // Apply uploaded voice sound file across Portuguese / script dialogue turns
-  const handleApplyReferenceAudioToAllSegments = useCallback(
-    (audioBuffer: AudioBuffer, fileName: string, base64?: string) => {
-      // Trigger voice cloning and apply to read all text boxes
-      if (base64) {
-        fetch('/api/voice/clone-profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            audioBase64: base64,
-            mimeType: 'audio/wav',
-            fileName,
-            language,
-          }),
-        })
-          .then((r) => r.json())
-          .then((data) => {
-            const clonedProfile: ClonedVoiceProfile = {
-              name: fileName,
-              voiceName: data.voiceName || 'Charon',
-              pitch: data.pitch ?? 0.94,
-              speed: data.speed ?? 1.0,
-              tone: data.tone ?? -0.2,
-              stylePrompt: data.stylePrompt || '',
-              summary: data.summary || `Cloned voice from ${fileName}`,
-              detectedAccent: data.detectedAccent,
-              sourceAudioBase64: base64,
-            };
-
-            const current = speakersRef.current;
-            const nextSpeakers = {
-              male: {
-                ...current.male,
-                voiceName: 'Charon',
-                pitch: 0.94,
-                speed: clonedProfile.speed,
-                tone: -0.2,
-                stylePrompt: clonedProfile.stylePrompt,
-                clonedVoice: clonedProfile,
-              },
-              female: {
-                ...current.female,
-                voiceName: 'Aoede',
-                pitch: 1.0,
-                speed: 1.0,
-                tone: 0.1,
-                stylePrompt: clonedProfile.stylePrompt,
-                clonedVoice: clonedProfile,
-              },
-            };
-            setSpeakers(nextSpeakers);
-            speakersRef.current = nextSpeakers;
-
-            const updated = segmentsRef.current.map((s) => ({
-              ...s,
-              status: 'idle' as const,
-              isCustomAudio: false,
-              audioBuffer: undefined,
-              audioBase64: undefined,
-              styleDescription: clonedProfile.stylePrompt,
-              clonedVoiceName: fileName,
-            }));
-            setSegments(updated);
-            segmentsRef.current = updated;
-            setTimeout(() => startBatchProcessing(updated, nextSpeakers, false), 50);
-          })
-          .catch((e) => console.warn('Voice clone fallback:', e));
-      }
-    },
-    [language]
-  );
-
-  // Apply speaker uploaded audio as a cloned voice to read all turns for that speaker
-  const handleApplySpeakerAudioToSegments = useCallback(
-    (
-      gender: 'male' | 'female',
-      audioBuffer: AudioBuffer,
-      fileName: string,
-      base64?: string
-    ) => {
-      if (base64) {
-        fetch('/api/voice/clone-profile', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            audioBase64: base64,
-            mimeType: 'audio/wav',
-            fileName,
-            language,
-          }),
-        })
-          .then((r) => r.json())
-          .then((data) => {
-            const isFem = gender === 'female';
-            const clonedProfile: ClonedVoiceProfile = {
-              name: fileName,
-              voiceName: data.voiceName || (isFem ? 'Aoede' : 'Charon'),
-              pitch: data.pitch ?? (isFem ? 1.0 : 0.94),
-              speed: data.speed ?? 1.0,
-              tone: data.tone ?? (isFem ? 0.1 : -0.2),
-              stylePrompt: data.stylePrompt || '',
-              summary: data.summary || `Cloned voice from ${fileName}`,
-              detectedAccent: data.detectedAccent,
-              sourceAudioBase64: base64,
-            };
-            handleApplyClonedVoiceToSpeaker(gender, clonedProfile, true);
-          })
-          .catch((err) => {
-            console.warn('Speaker voice clone fallback:', err);
-          });
-      }
-    },
-    [language, handleApplyClonedVoiceToSpeaker]
-  );
-
-  // Backward-compatible alias for Portuguese voice cloning
-  const handleClonePortugueseVoice = useCallback(
-    (file: File) => handleCloneAndApplyVoice(file, 'both'),
-    [handleCloneAndApplyVoice]
-  );
-
-  // Language change handler - switches language and loads matching natural sample script
-  const handleLanguageChange = (newLang: PodcastLanguage) => {
-    setLanguage(newLang);
-    const matchingSample = SAMPLE_SCRIPTS.find((s) => s.language === newLang);
-    if (matchingSample) {
-      const newSegs: PodcastSegment[] = matchingSample.segments.map((s, idx) => ({
-        ...s,
-        id: `seg-${newLang}-${Date.now()}-${idx}`,
-        status: 'idle',
-      }));
-      setSegments(newSegs);
-      segmentsRef.current = newSegs;
-      setMasterAudioBuffer(null);
-      setWavUrl(null);
-      setMp3Url(null);
-      setTotalDuration(0);
+      const sizeKb = Math.round(blob.size / 1024);
+      setDownloadSuccessMsg(`Descarregado com sucesso: "${fileName}" (${sizeKb} KB, WAV 16-bit 44.1kHz).`);
+      setTimeout(() => setDownloadSuccessMsg(null), 6000);
+    } catch (e: any) {
+      console.error(e);
+      setError("Erro ao renderizar e descarregar o ficheiro .WAV.");
+    } finally {
+      setIsExporting(false);
     }
   };
 
-  const handlePauseResumeBatch = () => {
-    setIsBatchPaused((prev) => !prev);
+  const handleCopyText = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-amber-500 selection:text-zinc-950">
-      {/* APP TOP NAVIGATION */}
-      <header className="border-b border-zinc-800/80 bg-zinc-900/60 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          {/* Logo & Brand */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-amber-500 via-amber-400 to-rose-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <Headphones className="w-5 h-5 text-zinc-950 stroke-[2.2]" />
+    <main className="min-h-screen bg-stone-950 text-stone-100 flex flex-col items-center justify-center p-3 sm:p-6 lg:p-8 font-sans">
+      <div className="w-full max-w-4xl space-y-6">
+        {/* Header */}
+        <div className="text-center space-y-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wider">
+            <Radio className="w-3.5 h-3.5" />
+            Emissora Nacional de Radiodifusão • Anos 1950
+          </div>
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-serif font-bold text-amber-100">
+            Locutor de Rádio dos Anos 1950 (Vozes Masculinas de Época)
+          </h1>
+          <p className="text-sm text-stone-400 max-w-2xl mx-auto leading-relaxed">
+            Síntese vocal masculina com dicção rigorosa em <strong className="text-amber-300">Português de Portugal (pt-PT)</strong>, 
+            sotaque continental dos estúdios de Lisboa dos anos 50 e processamento acústico a válvulas com exportação em formato <strong className="text-amber-300">.WAV</strong>.
+          </p>
+
+          {/* Accent & Phonetics Badge */}
+          <div className="pt-2 flex flex-wrap items-center justify-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-950/70 border border-emerald-700/50 text-emerald-300 font-medium">
+              <span className="text-base leading-none">🇵🇹</span>
+              <span>Sotaque Estrito: Portugal Continental (pt-PT / Lisboa)</span>
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-stone-900 border border-stone-800 text-stone-400 text-[11px]">
+              Vogais átonas reduzidas [ɨ]/[u]
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-stone-900 border border-stone-800 text-stone-400 text-[11px]">
+              Sibilantes chiadas [ʃ]/[ʒ]
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-stone-900 border border-stone-800 text-stone-400 text-[11px]">
+              Oclusivas dentais secas [t]/[d]
+            </span>
+            <span className="px-2.5 py-1 rounded-lg bg-stone-900 border border-stone-800 text-stone-400 text-[11px]">
+              Zero sotaque brasileiro
+            </span>
+          </div>
+        </div>
+
+        {/* Error Notification */}
+        {error && (
+          <div className="p-4 rounded-xl bg-red-950/70 border border-red-800 text-red-200 text-sm flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">{error}</div>
+          </div>
+        )}
+
+        {/* Download Success Notification */}
+        {downloadSuccessMsg && (
+          <div className="p-4 rounded-xl bg-emerald-950/80 border border-emerald-700 text-emerald-200 text-sm flex items-start gap-3 animate-fade-in">
+            <Check className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">{downloadSuccessMsg}</div>
+          </div>
+        )}
+
+        {/* Historical Presets Quick Selector */}
+        <div className="bg-stone-900/80 border border-stone-800 rounded-2xl p-4 space-y-2.5">
+          <div className="flex items-center justify-between text-xs text-stone-400">
+            <span className="font-semibold uppercase tracking-wider text-amber-400/90 flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5" />
+              Textos Históricos de Portugal dos Anos 1950 (Predefinições):
+            </span>
+            <span className="text-[11px] text-stone-500 hidden sm:inline">Clique para carregar o texto e locutor recomendado</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {PRESET_BROADCASTS.map((p) => {
+              const voiceMatch = VOICES.find((v) => v.id === p.suggestedVoice);
+              const isCurrent = text === p.text;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleLoadPreset(p.text, p.suggestedVoice)}
+                  className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer ${
+                    isCurrent
+                      ? "bg-amber-500/15 border-amber-500/80 text-amber-200 shadow-sm"
+                      : "bg-stone-950/60 border-stone-800/80 text-stone-300 hover:border-stone-700 hover:bg-stone-950"
+                  }`}
+                >
+                  <div className="text-[11px] font-bold text-amber-400 truncate">{p.title}</div>
+                  <div className="text-[10px] text-stone-400 mt-0.5 truncate">{p.stationName} • {p.date}</div>
+                  <div className="text-[10px] text-stone-500 mt-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    <span>Locutor: {voiceMatch?.id}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Text Input Card */}
+        <div className="bg-stone-900/90 border border-stone-800 rounded-2xl p-5 shadow-xl space-y-4">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold uppercase tracking-wider text-amber-400/90 flex items-center gap-1.5">
+              <Mic className="w-3.5 h-3.5" />
+              Texto para Locução (Português de Portugal):
+            </label>
+            <button
+              type="button"
+              onClick={handleCopyText}
+              className="text-xs text-stone-400 hover:text-stone-200 flex items-center gap-1 px-2 py-1 rounded hover:bg-stone-800 transition-colors cursor-pointer"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copied ? "Copiado!" : "Copiar"}</span>
+            </button>
+          </div>
+
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={6}
+            className="w-full bg-stone-950 border border-stone-800 focus:border-amber-500 rounded-xl p-4 text-stone-200 text-sm sm:text-base font-serif leading-relaxed focus:outline-none focus:ring-2 focus:ring-amber-500/20 resize-y"
+            placeholder="Insira aqui o texto a sintetizar em português de Portugal..."
+          />
+
+          {/* Voice Selection - 4 Distinct Male Voices */}
+          <div className="space-y-2 pt-2 border-t border-stone-800">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-stone-300 flex items-center gap-1.5">
+                <Award className="w-3.5 h-3.5 text-amber-400" />
+                Variedade Vocal: 4 Locutores Masculinos de 1950 (Apenas Vozes Masculinas):
+              </label>
+              <span className="text-[11px] text-stone-400">Clique para alternar o timbre</span>
             </div>
-            <div>
-              <h1 className="text-base font-extrabold tracking-tight text-white flex items-center gap-2">
-                PodWave Studio
-              </h1>
-              <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                <span>Dual Voice Dialogue</span>
-                <span aria-hidden="true">·</span>
-                <span>English & Português (PT)</span>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {VOICES.map((v) => {
+                const isSelected = voice === v.id;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => handleSelectVoice(v.id)}
+                    className={`text-left p-3.5 rounded-xl border text-xs transition-all cursor-pointer relative ${
+                      isSelected
+                        ? "bg-amber-500/15 border-amber-500 text-amber-100 shadow-md ring-1 ring-amber-500/50"
+                        : "bg-stone-950 border-stone-800 text-stone-400 hover:border-stone-700 hover:text-stone-300"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-bold font-serif text-sm text-stone-100">{v.title}</div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-md font-mono font-semibold whitespace-nowrap ${
+                        isSelected ? "bg-amber-500/30 text-amber-300 border border-amber-500/40" : "bg-stone-800 text-stone-400"
+                      }`}>
+                        {v.registerBadge}
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-stone-300 mt-1 font-medium">{v.role}</div>
+                    <div className="text-[11px] text-stone-400 mt-0.5 leading-snug">{v.description}</div>
+                    <div className="text-[10px] text-amber-400/80 mt-1.5 italic flex items-center gap-1">
+                      <span>• {v.accentHint}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Voice Depth, Clarity & Tone Tuning Controls */}
+          <div className="bg-stone-950/80 border border-stone-800 rounded-xl p-3.5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-amber-400/90 flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5" />
+                Afinação Acústica & Diccção:
+              </span>
+              {/* Quick Presets */}
+              <div className="flex items-center gap-1 text-[11px]">
+                <span className="text-stone-500 mr-1">Perfis Rápidos:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClarityBoostAmount(9);
+                    setBassBoostAmount(3);
+                    setPitchShiftMultiplier(0.98);
+                    setRadioEffect(true);
+                  }}
+                  className={`px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                    clarityBoostAmount >= 8
+                      ? "bg-amber-500/20 border-amber-500/60 text-amber-300 font-bold"
+                      : "bg-stone-900 border-stone-800 text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  ⚡ Máxima Nitidez 1950s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClarityBoostAmount(6);
+                    setBassBoostAmount(8);
+                    setPitchShiftMultiplier(0.93);
+                    setRadioEffect(true);
+                  }}
+                  className={`px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                    bassBoostAmount >= 7
+                      ? "bg-amber-500/20 border-amber-500/60 text-amber-300 font-bold"
+                      : "bg-stone-900 border-stone-800 text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  🎙️ Baixo Profundo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setClarityBoostAmount(0);
+                    setBassBoostAmount(0);
+                    setPitchShiftMultiplier(1.0);
+                    setRadioEffect(false);
+                  }}
+                  className={`px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                    !radioEffect
+                      ? "bg-amber-500/20 border-amber-500/60 text-amber-300 font-bold"
+                      : "bg-stone-900 border-stone-800 text-stone-400 hover:text-stone-200"
+                  }`}
+                >
+                  ✨ Som Puro
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+              {/* Pitch Slider */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-stone-400">
+                  <span>Tom & Gravidade:</span>
+                  <span className="font-mono text-stone-300">{Math.round((1 - pitchShiftMultiplier) * 100)}% grave</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.88}
+                  max={1.05}
+                  step={0.01}
+                  value={pitchShiftMultiplier}
+                  onChange={(e) => setPitchShiftMultiplier(Number(e.target.value))}
+                  className="w-full h-2 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+                <div className="flex justify-between text-[10px] text-stone-500 font-mono">
+                  <span>Grave (0.88)</span>
+                  <span>Normal (1.00)</span>
+                </div>
+              </div>
+
+              {/* Clarity / Presence Slider */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-stone-400">
+                  <span className="text-amber-300 font-medium">Claridade & Articulação:</span>
+                  <span className="font-mono text-amber-300">+{clarityBoostAmount} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  step={1}
+                  value={clarityBoostAmount}
+                  onChange={(e) => setClarityBoostAmount(Number(e.target.value))}
+                  className="w-full h-2 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+                <div className="flex justify-between text-[10px] text-stone-500 font-mono">
+                  <span>Suave (0 dB)</span>
+                  <span>Nítido (+10 dB)</span>
+                </div>
+              </div>
+
+              {/* Bass Boost Slider */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-stone-400">
+                  <span>Ressonância de Peito:</span>
+                  <span className="font-mono text-stone-300">+{bassBoostAmount} dB</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={12}
+                  step={1}
+                  value={bassBoostAmount}
+                  onChange={(e) => setBassBoostAmount(Number(e.target.value))}
+                  className="w-full h-2 bg-stone-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+                <div className="flex justify-between text-[10px] text-stone-500 font-mono">
+                  <span>Plano (0 dB)</span>
+                  <span>Encorpado (+12 dB)</span>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Quick Actions in Header */}
-          <div className="flex items-center gap-3">
-            {/* Language status */}
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs font-medium text-zinc-300">
-              <span>{language === 'pt-PT' ? '🇵🇹 pt-PT' : '🇬🇧 en-US'}</span>
+          {/* 1950s Radio Effect Toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-xs">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={radioEffect}
+                onChange={(e) => setRadioEffect(e.target.checked)}
+                className="w-4 h-4 rounded text-amber-500 accent-amber-500 bg-stone-950 border-stone-700 cursor-pointer"
+              />
+              <span className="text-stone-300 font-medium">
+                Efeito de Transmissão de Rádio 1950s (Filtro AM + Válvulas + Chiado Vintage)
+              </span>
+            </label>
+
+            <div className="flex items-center gap-1.5 text-stone-400">
+              <span>Cadência:</span>
+              {[0.9, 0.94, 1.0, 1.06].map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSpeed(s)}
+                  className={`px-2 py-0.5 rounded border text-[11px] font-mono cursor-pointer ${
+                    speed === s
+                      ? "bg-amber-500/20 border-amber-500/60 text-amber-300 font-bold"
+                      : "bg-stone-950 border-stone-800 hover:border-stone-700"
+                  }`}
+                >
+                  {s}x
+                </button>
+              ))}
             </div>
-
-            {/* Speech to text trigger */}
-            <button
-              disabled
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-200 border border-zinc-700/80 hover:border-zinc-500 transition-colors shadow-sm"
-              title="Convert speech to podcast script"
-            >
-              <Mic className="w-3.5 h-3.5 text-sky-400" />
-              <span className="hidden sm:inline">Speech to Text</span>
-            </button>
-
-            {/* Primary Batch Render */}
-            <button
-              onClick={() => startBatchProcessing(undefined, undefined, true)}
-              disabled={isBatchProcessing || segments.length === 0}
-              className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 transition-all shadow-md shadow-amber-500/20 disabled:opacity-40"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Render Podcast</span>
-            </button>
           </div>
+
+          {/* Generate Button */}
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={isGenerating || !text.trim()}
+            className="w-full py-4 px-6 rounded-xl font-serif font-bold text-base flex items-center justify-center gap-2 transition-all bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 shadow-lg shadow-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-[0.99]"
+          >
+            {isGenerating ? (
+              <>
+                <div className="w-5 h-5 border-2 border-stone-950 border-t-transparent rounded-full animate-spin" />
+                <span>A Sintetizar com Sotaque de Portugal (pt-PT)...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-5 h-5" />
+                <span>Transmitir Locução 1950s ({VOICES.find(v => v.id === voice)?.title.split("—")[0].trim()})</span>
+              </>
+            )}
+          </button>
         </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-3 text-sm text-zinc-300">Simão & Marta · Portuguese podcast voices · Audio generation uses your ElevenLabs credits.</div>
-      {/* MAIN CONTAINER */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* SECTION 1: DUAL VOICE HARDWARE CONTROL RACK */}
-        <section aria-labelledby="voice-knobs-heading">
-          <div className="flex items-center justify-between mb-3 px-1">
-            <div className="flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-amber-400" />
-              <h2
-                id="voice-knobs-heading"
-                className="text-xs font-bold uppercase tracking-wider text-zinc-300"
-              >
-                Acoustic Knobs & Voice Personas
-              </h2>
+        {/* Audio Player & Download Card */}
+        {hasAudio && (
+          <div className="bg-stone-900 border-2 border-amber-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full ${isPlaying ? "bg-red-500 animate-pulse" : "bg-emerald-500"}`} />
+                <span className="font-serif font-bold text-amber-200 text-sm">
+                  {isPlaying ? `A Transmitir: ${VOICES.find(v => v.id === voice)?.title}` : "Emissão de Áudio Pronta"}
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  pt-PT • 1950s
+                </span>
+              </div>
+              <span className="text-xs font-mono text-stone-400">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
             </div>
-            <div className="text-[11px] text-zinc-500 flex items-center gap-1">
-              <Info className="w-3 h-3 text-zinc-400" />
-              <span>Adjust pitch, speed, and warmth/brightness tone for each speaker</span>
+
+            {/* Time progress bar */}
+            <div className="w-full h-2 bg-stone-950 rounded-full overflow-hidden border border-stone-800">
+              <div
+                className="h-full bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-100"
+                style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+              />
+            </div>
+
+            {/* Transport & Download controls */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              {/* Playback Controls */}
+              <div className="flex items-center gap-2">
+                {isPlaying ? (
+                  <button
+                    type="button"
+                    onClick={handlePause}
+                    className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold font-serif text-sm flex items-center gap-2 cursor-pointer transition-colors shadow"
+                  >
+                    <Pause className="w-4 h-4" />
+                    <span>Pausar</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handlePlay}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-stone-950 font-bold font-serif text-sm flex items-center gap-2 cursor-pointer transition-all shadow"
+                  >
+                    <Play className="w-4 h-4" />
+                    <span>Ouvir Locução</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleRestart}
+                  title="Reiniciar Emissão"
+                  className="p-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+
+                {/* Volume Slider */}
+                <div className="flex items-center gap-2 text-xs text-stone-400 ml-2">
+                  <Volume2 className="w-4 h-4 text-stone-400" />
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={volume}
+                    onChange={(e) => setVolume(Number(e.target.value))}
+                    className="w-20 sm:w-24 h-1.5 bg-stone-800 rounded appearance-none cursor-pointer accent-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Download Buttons Section */}
+              <div className="flex items-center gap-2">
+                {/* Download Full 1950s AM Radio Audio */}
+                <button
+                  type="button"
+                  onClick={() => handleDownload(true)}
+                  disabled={isExporting}
+                  title="Descarregar ficheiro WAV com filtro de rádio AM 1950s, válvulas e atmosfera de época"
+                  className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-serif font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-colors shadow disabled:opacity-50"
+                >
+                  {isExporting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-stone-950 border-t-transparent rounded-full animate-spin" />
+                      <span>A Gerar WAV...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      <span>Descarregar .WAV (Rádio 1950s)</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Download Clean Studio Audio */}
+                <button
+                  type="button"
+                  onClick={() => handleDownload(false)}
+                  disabled={isExporting}
+                  title="Descarregar ficheiro WAV puro de estúdio (com afinação e presença, sem chiado de rádio)"
+                  className="px-3.5 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-amber-300 border border-stone-700 hover:border-amber-500/40 text-xs font-serif font-semibold flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  <FileAudio className="w-3.5 h-3.5" />
+                  <span>Estúdio Limpo</span>
+                </button>
+              </div>
             </div>
           </div>
-
-          <VoiceControlPanel
-            speakers={speakers}
-            onUpdateSpeaker={handleUpdateSpeaker}
-            language={language}
-            onApplySpeakerAudioToSegments={handleApplySpeakerAudioToSegments}
-            onApplyClonedVoiceToSpeaker={handleApplyClonedVoiceToSpeaker}
-          />
-        </section>
-
-        {/* SECTION 2: BACK-AND-FORTH PODCAST SCRIPT EDITOR */}
-        <section aria-labelledby="script-editor-heading">
-          <div className="flex items-center justify-between mb-3 px-1">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-amber-400" />
-              <h2
-                id="script-editor-heading"
-                className="text-xs font-bold uppercase tracking-wider text-zinc-300"
-              >
-                Back-and-Forth Dialogue Editor
-              </h2>
-            </div>
-            <div className="text-[11px] text-zinc-500">
-              <span>{segments.length} dialogue turns · Preview individual segments or render all</span>
-            </div>
-          </div>
-
-          <ScriptEditor
-            segments={segments}
-            onUpdateSegments={(segs) => {
-              setSegments(segs);
-              segmentsRef.current = segs;
-            }}
-            speakers={speakers}
-            language={language}
-            onLanguageChange={handleLanguageChange}
-            onOpenTranscriber={() => setIsTranscriberOpen(true)}
-            onStartBatchProcessing={() => startBatchProcessing(undefined, undefined, true)}
-            isBatchProcessing={isBatchProcessing}
-            onApplyReferenceAudio={handleApplyReferenceAudioToAllSegments}
-            onApplyClonedVoice={handleCloneAndApplyVoice}
-            onRemixMaster={() => remixMaster()}
-          />
-        </section>
-
-        {/* SECTION 3: MASTER PODCAST TIMELINE & EXPORT HUB */}
-        <section aria-labelledby="master-player-heading">
-          <div className="flex items-center justify-between mb-3 px-1">
-            <div className="flex items-center gap-2">
-              <Radio className="w-4 h-4 text-amber-400" />
-              <h2
-                id="master-player-heading"
-                className="text-xs font-bold uppercase tracking-wider text-zinc-300"
-              >
-                Master Preview & Export Station
-              </h2>
-            </div>
-            <div className="text-[11px] text-zinc-500">
-              <span>Export options: WAV 16-bit Lossless & MP3 192kbps</span>
-            </div>
-          </div>
-
-          <MasterPlayer
-            masterAudioBuffer={masterAudioBuffer}
-            wavUrl={wavUrl}
-            mp3Url={mp3Url}
-            totalDuration={totalDuration}
-            segments={segments}
-            speakers={speakers}
-            includeIntroChime={includeIntroChime}
-            onToggleIntroChime={setIncludeIntroChime}
-            pauseDuration={pauseDuration}
-            onChangePauseDuration={setPauseDuration}
-            onRemixMaster={() => remixMaster(segments)}
-            isRemixing={isRemixing}
-            onStartRenderAll={() => startBatchProcessing(undefined, undefined, true)}
-          />
-        </section>
-      </main>
-
-      {/* FOOTER */}
-      <footer className="border-t border-zinc-800/60 bg-zinc-950/80 py-5 text-center text-xs text-zinc-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <p>PodWave Studio · Studio-Grade Dual Voice Podcast Audio Production</p>
-          <div className="flex items-center gap-3">
-            <span>English (en-US)</span>
-            <span>·</span>
-            <span>Português de Portugal (pt-PT)</span>
-            <span>·</span>
-            <span>WAV & MP3</span>
-          </div>
-        </div>
-      </footer>
-
-      {/* MODALS */}
-      <BatchProcessorModal
-        isOpen={isBatchModalOpen}
-        onClose={() => setIsBatchModalOpen(false)}
-        progress={batchProgress}
-        segments={segments}
-        speakers={speakers}
-        onPauseResume={handlePauseResumeBatch}
-        isPaused={isBatchPaused}
-        wavUrl={wavUrl}
-        mp3Url={mp3Url}
-        totalDuration={totalDuration}
-      />
-
-      <SpeechToTextModal
-        isOpen={isTranscriberOpen}
-        onClose={() => setIsTranscriberOpen(false)}
-        onApplyTranscript={(newSegs) => setSegments(newSegs)}
-        language={language}
-      />
-    </div>
+        )}
+      </div>
+    </main>
   );
 }
+

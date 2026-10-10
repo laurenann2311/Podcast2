@@ -1,0 +1,6 @@
+{
+  "name": "1950s Vintage Radio Broadcaster",
+  "description": "Mid-century 1950s vintage radio text-to-speech announcer in Portuguese, featuring authentic tube saturation, AM bandpass filters, vinyl crackle, and retro radio console controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
